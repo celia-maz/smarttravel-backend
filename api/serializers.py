@@ -22,6 +22,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 class UserSerializer(serializers.ModelSerializer):
+    avatar = serializers.CharField(read_only=True)
+
     class Meta:
         model  = User
         fields = ['id', 'email', 'name', 'phone', 'bio', 'location',
@@ -38,6 +40,7 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
 # ─── Country ──────────────────────────────────────────────────────────────────
 class CountrySerializer(serializers.ModelSerializer):
     cities_count = serializers.SerializerMethodField()
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Country
@@ -50,6 +53,7 @@ class CountrySerializer(serializers.ModelSerializer):
 class CitySerializer(serializers.ModelSerializer):
     country_name = serializers.CharField(source='country.name', read_only=True)
     country_flag = serializers.CharField(source='country.flag', read_only=True)
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = City
@@ -57,6 +61,7 @@ class CitySerializer(serializers.ModelSerializer):
 
 class CityDetailSerializer(serializers.ModelSerializer):
     country      = CountrySerializer(read_only=True)
+    image        = serializers.CharField(read_only=True)
     hotels       = serializers.SerializerMethodField()
     restaurants  = serializers.SerializerMethodField()
     activities   = serializers.SerializerMethodField()
@@ -81,6 +86,7 @@ class CityDetailSerializer(serializers.ModelSerializer):
 # ─── Hotel ────────────────────────────────────────────────────────────────────
 class HotelSerializer(serializers.ModelSerializer):
     city_name = serializers.CharField(source='city.name', read_only=True)
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Hotel
@@ -89,6 +95,7 @@ class HotelSerializer(serializers.ModelSerializer):
 # ─── Restaurant ───────────────────────────────────────────────────────────────
 class RestaurantSerializer(serializers.ModelSerializer):
     city_name = serializers.CharField(source='city.name', read_only=True)
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Restaurant
@@ -97,6 +104,7 @@ class RestaurantSerializer(serializers.ModelSerializer):
 # ─── Activity ─────────────────────────────────────────────────────────────────
 class ActivitySerializer(serializers.ModelSerializer):
     city_name = serializers.CharField(source='city.name', read_only=True)
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Activity
@@ -105,6 +113,7 @@ class ActivitySerializer(serializers.ModelSerializer):
 # ─── Monument ─────────────────────────────────────────────────────────────────
 class MonumentSerializer(serializers.ModelSerializer):
     city_name = serializers.CharField(source='city.name', read_only=True)
+    image = serializers.CharField(read_only=True)
 
     class Meta:
         model  = Monument
