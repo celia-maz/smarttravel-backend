@@ -1,0 +1,1 @@
+web: gunicorn smarttravel.wsgi:application --log-file -
