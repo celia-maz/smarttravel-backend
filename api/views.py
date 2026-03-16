@@ -71,6 +71,7 @@ class CheckAuthView(APIView):
 class ProfileView(APIView):
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
     def put(self, request):
         serializer = UpdateProfileSerializer(request.user, data=request.data, partial=True)
         if serializer.is_valid():
@@ -80,13 +81,29 @@ class ProfileView(APIView):
 
 
 class UploadAvatarView(APIView):
+    """Upload avatar as base64 URL or direct URL string"""
     def post(self, request):
-        if 'avatar' not in request.FILES:
-            return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
         user = request.user
-        user.avatar = request.FILES['avatar']
-        user.save()
-        return Response({'avatar': request.build_absolute_uri(user.avatar.url) if user.avatar else None})
+        # Accept URL string directly
+        avatar_url = request.data.get('avatar_url')
+        if avatar_url:
+            user.avatar = avatar_url
+            user.save()
+            return Response({'avatar': user.avatar, 'user': UserSerializer(user).data})
+
+        # Accept file upload — convert to base64 and store as data URL
+        if 'avatar' in request.FILES:
+            import base64
+            image_file = request.FILES['avatar']
+            image_data = image_file.read()
+            base64_data = base64.b64encode(image_data).decode('utf-8')
+            content_type = image_file.content_type or 'image/jpeg'
+            data_url = f'data:{content_type};base64,{base64_data}'
+            user.avatar = data_url
+            user.save()
+            return Response({'avatar': user.avatar, 'user': UserSerializer(user).data})
+
+        return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SavePreferencesView(APIView):
@@ -129,7 +146,12 @@ class CityListView(generics.ListAPIView):
         qs = City.objects.filter(is_active=True)
         q = self.request.query_params.get('q')
         if q:
-            qs = qs.filter(Q(name__icontains=q) | Q(tag__icontains=q))
+            qs = qs.filter(
+                Q(name__icontains=q) |
+                Q(tag__icontains=q) |
+                Q(country__name__icontains=q) |
+                Q(description__icontains=q)
+            )
         country = self.request.query_params.get('country')
         if country:
             qs = qs.filter(country__id=country)
@@ -227,13 +249,69 @@ class MonumentDetailView(generics.RetrieveAPIView):
 def search(request):
     q = request.query_params.get('q', '')
     if not q:
-        return Response({'results': []})
-    cities      = CitySerializer(City.objects.filter(Q(name__icontains=q)|Q(tag__icontains=q), is_active=True)[:5], many=True).data
-    countries   = CountrySerializer(Country.objects.filter(Q(name__icontains=q), is_active=True)[:5], many=True).data
-    hotels      = HotelSerializer(Hotel.objects.filter(name__icontains=q, is_active=True)[:5], many=True).data
-    restaurants = RestaurantSerializer(Restaurant.objects.filter(Q(name__icontains=q)|Q(cuisine_type__icontains=q), is_active=True)[:5], many=True).data
-    activities  = ActivitySerializer(Activity.objects.filter(name__icontains=q, is_active=True)[:5], many=True).data
-    monuments   = MonumentSerializer(Monument.objects.filter(name__icontains=q, is_active=True)[:5], many=True).data
+        return Response({'cities': [], 'countries': [], 'hotels': [],
+                         'restaurants': [], 'activities': [], 'monuments': []})
+
+    cities = CitySerializer(
+        City.objects.filter(
+            Q(name__icontains=q) |
+            Q(tag__icontains=q) |
+            Q(country__name__icontains=q) |
+            Q(description__icontains=q),
+            is_active=True
+        ).order_by('-popularity')[:8],
+        many=True
+    ).data
+
+    countries = CountrySerializer(
+        Country.objects.filter(
+            Q(name__icontains=q) |
+            Q(capital__icontains=q) |
+            Q(continent__icontains=q),
+            is_active=True
+        )[:5],
+        many=True
+    ).data
+
+    hotels = HotelSerializer(
+        Hotel.objects.filter(
+            Q(name__icontains=q) |
+            Q(city__name__icontains=q) |
+            Q(city__country__name__icontains=q),
+            is_active=True
+        )[:5],
+        many=True
+    ).data
+
+    restaurants = RestaurantSerializer(
+        Restaurant.objects.filter(
+            Q(name__icontains=q) |
+            Q(cuisine_type__icontains=q) |
+            Q(city__name__icontains=q),
+            is_active=True
+        )[:5],
+        many=True
+    ).data
+
+    activities = ActivitySerializer(
+        Activity.objects.filter(
+            Q(name__icontains=q) |
+            Q(category__icontains=q) |
+            Q(city__name__icontains=q),
+            is_active=True
+        )[:5],
+        many=True
+    ).data
+
+    monuments = MonumentSerializer(
+        Monument.objects.filter(
+            Q(name__icontains=q) |
+            Q(city__name__icontains=q),
+            is_active=True
+        )[:5],
+        many=True
+    ).data
+
     return Response({
         'cities': cities, 'countries': countries, 'hotels': hotels,
         'restaurants': restaurants, 'activities': activities, 'monuments': monuments
@@ -247,7 +325,8 @@ def nearby(request):
     cities = City.objects.filter(is_active=True).order_by('-popularity')[:6]
     if user_location:
         nearby_first = City.objects.filter(
-            Q(country__name__icontains=user_location) | Q(country__continent__icontains=user_location),
+            Q(country__name__icontains=user_location) |
+            Q(country__continent__icontains=user_location),
             is_active=True
         ).order_by('-popularity')[:6]
         if nearby_first.exists():
@@ -268,6 +347,10 @@ def generate_trip(request):
     travel_type = request.data.get('travel_type', request.user.travel_type)
     duration    = request.data.get('duration', 7)
     interests   = request.data.get('interests', request.user.interests)
+    pace        = request.data.get('pace', 'balanced')
+    accommodation = request.data.get('accommodation', 'hotel')
+    season      = request.data.get('season', 'any')
+
     try:
         country = Country.objects.get(name__icontains=destination, is_active=True)
         cities  = City.objects.filter(country=country, is_active=True)
@@ -276,35 +359,64 @@ def generate_trip(request):
             score = city.popularity * 0.3 + city.rating * 10
             if city.budget_level == budget:
                 score += 20
+            # Boost cities matching interests
+            for interest in interests:
+                if interest.lower() in city.tag.lower():
+                    score += 15
             scored.append({
                 'city': CitySerializer(city).data,
                 'score': round(score, 2),
-                'activities': ActivitySerializer(city.activities.filter(is_active=True)[:3], many=True).data,
-                'hotels': HotelSerializer(city.hotels.filter(is_active=True)[:2], many=True).data,
-                'restaurants': RestaurantSerializer(city.restaurants.filter(is_active=True)[:2], many=True).data,
-                'monuments': MonumentSerializer(city.monuments.filter(is_active=True)[:2], many=True).data,
+                'activities': ActivitySerializer(
+                    city.activities.filter(is_active=True)[:4], many=True).data,
+                'hotels': HotelSerializer(
+                    city.hotels.filter(is_active=True)[:3], many=True).data,
+                'restaurants': RestaurantSerializer(
+                    city.restaurants.filter(is_active=True)[:3], many=True).data,
+                'monuments': MonumentSerializer(
+                    city.monuments.filter(is_active=True)[:3], many=True).data,
             })
         scored.sort(key=lambda x: x['score'], reverse=True)
         return Response({
-            'destination': destination, 'budget': budget,
-            'duration': duration, 'travel_type': travel_type,
-            'interests': interests, 'cities': scored[:3]
+            'destination': destination,
+            'flag': country.flag,
+            'budget': budget,
+            'duration': duration,
+            'travel_type': travel_type,
+            'interests': interests,
+            'pace': pace,
+            'accommodation': accommodation,
+            'season': season,
+            'cities': scored[:3]
         })
     except Country.DoesNotExist:
-        city_results = City.objects.filter(name__icontains=destination, is_active=True)[:1]
+        city_results = City.objects.filter(
+            Q(name__icontains=destination) |
+            Q(country__name__icontains=destination),
+            is_active=True
+        )[:3]
         if city_results.exists():
-            city = city_results.first()
+            scored = []
+            for city in city_results:
+                scored.append({
+                    'city': CitySerializer(city).data,
+                    'score': 100,
+                    'activities': ActivitySerializer(
+                        city.activities.filter(is_active=True)[:4], many=True).data,
+                    'hotels': HotelSerializer(
+                        city.hotels.filter(is_active=True)[:3], many=True).data,
+                    'restaurants': RestaurantSerializer(
+                        city.restaurants.filter(is_active=True)[:3], many=True).data,
+                    'monuments': MonumentSerializer(
+                        city.monuments.filter(is_active=True)[:3], many=True).data,
+                })
             return Response({
-                'destination': destination, 'budget': budget,
-                'duration': duration, 'travel_type': travel_type,
+                'destination': destination,
+                'flag': '',
+                'budget': budget,
+                'duration': duration,
+                'travel_type': travel_type,
                 'interests': interests,
-                'cities': [{
-                    'city': CitySerializer(city).data, 'score': 100,
-                    'activities': ActivitySerializer(city.activities.filter(is_active=True)[:3], many=True).data,
-                    'hotels': HotelSerializer(city.hotels.filter(is_active=True)[:2], many=True).data,
-                    'restaurants': RestaurantSerializer(city.restaurants.filter(is_active=True)[:2], many=True).data,
-                    'monuments': MonumentSerializer(city.monuments.filter(is_active=True)[:2], many=True).data,
-                }]
+                'cities': scored
             })
         return Response({'error': 'Destination not found'}, status=status.HTTP_404_NOT_FOUND)
 
